@@ -14,7 +14,7 @@ const MODES = [
   {
     name: 'static',
     outputDir: 'dist-css-global-import-static',
-    exportEnv: { EXPO_USE_STATIC: 'static' },
+    exportEnv: { EXPO_USE_STATIC: 'static', E2E_ROUTER_SERVER_RENDERING: 'true' },
   },
   {
     name: 'server',
@@ -89,6 +89,15 @@ for (const mode of MODES) {
       expect(html).toMatch(
         /<link rel="stylesheet" href="https:\/\/fonts\.googleapis\.com\/css2\?family=Roboto:wght@300" media="screen and \(width (?:>|&gt;)= 900px\)"/
       );
+
+      const externalIndex = html.indexOf(
+        '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&amp;display=swap"'
+      );
+      const bundledIndex = html.search(
+        /<link rel="stylesheet" href="\/_expo\/static\/css\/second-[0-9a-f]{32}\.css"/
+      );
+      expect(externalIndex).toBeGreaterThanOrEqual(0);
+      expect(bundledIndex).toBeGreaterThan(externalIndex);
     });
   });
 }
