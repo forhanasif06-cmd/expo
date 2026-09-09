@@ -127,6 +127,10 @@ export async function cloneTemplateAndCopyToProjectAsync({
 
     // TODO(@kitten): This duplicates functionality that `cloneTemplateAsync` can already do
     const files = await getTemplateFilesToRenameAsync(projectRoot);
+    // The display name written here is escaped for each file format. For
+    // `android/app/src/main/res/values/strings.xml`, `AndroidConfig.Name.withName`
+    // later overwrites `app_name` from the raw config name, escaped the same way, so
+    // this escaping only has to keep the file valid until the mods run.
     await renameTemplateAppNameAsync(projectRoot, {
       files,
       expName: exp.name,
