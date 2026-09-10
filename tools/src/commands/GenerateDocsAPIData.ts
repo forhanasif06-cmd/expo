@@ -235,6 +235,7 @@ export const PACKAGES_MAPPING: Record<string, CommandAdditionalParams> = {
   'expo-linear-gradient': ['LinearGradient.tsx'],
   'expo-live-photo': ['index.ts'],
   'expo-local-authentication': ['LocalAuthentication.ts'],
+  'expo-local-language-models': ['index.ts'],
   'expo-localization': ['Localization.ts'],
   'expo-location': ['index.ts'],
   'expo-maps': [
