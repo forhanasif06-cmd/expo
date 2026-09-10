@@ -1,4 +1,5 @@
 {
-  "platforms": ["apple"],
-  "apple": { "modules": ["LocalLanguageModelsModule"] }
+  "platforms": ["apple", "android"],
+  "apple": { "modules": ["LocalLanguageModelsModule"] },
+  "android": { "modules": ["expo.modules.locallanguagemodels.LocalLanguageModelsModule"] }
 }
