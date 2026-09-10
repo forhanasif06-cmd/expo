@@ -106,6 +106,19 @@ internal object AndroidResourceAssetUtils {
     return AndroidResourceAsset(null, null, null)
   }
 
+  /**
+   * Fill in the embedded asset and resource fields, which are derived from `relativePath` rather
+   * than stored in the database.
+   */
+  fun fillEmbeddedAssetIdentity(asset: AssetEntity) {
+    val relativePath = asset.relativePath ?: return
+    val (embeddedAssetFilename, resourcesFolder, resourceFilename) =
+      parseAndroidResponseAssetFromPath(relativePath)
+    asset.embeddedAssetFilename = embeddedAssetFilename
+    asset.resourcesFolder = resourcesFolder
+    asset.resourcesFilename = resourceFilename
+  }
+
   private fun getDrawableSuffix(scale: Float?): String {
     return when (scale) {
       0.75f -> "-ldpi"

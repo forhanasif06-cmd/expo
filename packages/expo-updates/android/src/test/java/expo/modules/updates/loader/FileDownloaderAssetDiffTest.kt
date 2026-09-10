@@ -22,8 +22,10 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -265,7 +267,7 @@ class FileDownloaderAssetDiffTest {
     val response = "patch".toResponseBody("application/vnd.bsdiff".toMediaTypeOrNull())
 
     val launchedUpdate = createUpdate(currentUpdateId)
-    val context = downloader.prepareAssetForDiff(asset, response, updatesDirectory, launchedUpdate)
+    val context = downloader.prepareAssetForDiff(asset, response, patchDestination(), updatesDirectory, launchedUpdate)
     assertEquals(baseFile, context.baseFile)
   }
 
@@ -299,7 +301,7 @@ class FileDownloaderAssetDiffTest {
 
     val launchedUpdate = createUpdate(currentUpdateId)
     assertThrows(IOException::class.java) {
-      downloader.prepareAssetForDiff(asset, responseBody, updatesDirectory, launchedUpdate)
+      downloader.prepareAssetForDiff(asset, responseBody, patchDestination(), updatesDirectory, launchedUpdate)
     }
   }
 
@@ -342,6 +344,153 @@ class FileDownloaderAssetDiffTest {
     assertFalse(File(destination.absolutePath + ".patch").exists())
     assertFalse(File(destination.absolutePath + ".patched").exists())
   }
+
+  @Test
+  fun prepareAssetForDiff_extractsEmbeddedLaunchAssetFromApk() {
+    val currentUpdateId = UUID.randomUUID()
+    val baseBytes = loadFixture("old.hbc")
+
+    // With embedded asset copying off, the launch asset row points into the APK rather than at a
+    // file in the updates directory.
+    val launchEntity = AssetEntity("launch", "hbc").apply {
+      relativePath = "file:///android_asset/app.bundle"
+    }
+
+    val updateDao = mockk<UpdateDao> {
+      every { loadLaunchAssetForUpdate(currentUpdateId) } returns launchEntity
+    }
+    val database = mockk<UpdatesDatabase> {
+      every { updateDao() } returns updateDao
+    }
+    val downloader = FileDownloader(filesDirectory, "test-eas-client", configuration, logger, database)
+
+    val asset = AssetEntity("new", "hbc").apply { isLaunchAsset = true }
+    val response = "patch".toResponseBody("application/vnd.bsdiff".toMediaTypeOrNull())
+
+    // stands in for the caller reading the asset out of the APK
+    var extractedInto: File? = null
+    val extractor: EmbeddedAssetExtractor = { _, destination ->
+      destination.parentFile?.mkdirs()
+      destination.writeBytes(baseBytes)
+      extractedInto = destination
+    }
+
+    val context = downloader.prepareAssetForDiff(
+      asset,
+      response,
+      patchDestination(),
+      updatesDirectory,
+      createUpdate(currentUpdateId),
+      extractor
+    )
+
+    assertEquals(extractedInto, context.baseFile)
+    assertArrayEquals(baseBytes, context.baseFile.readBytes())
+    assertTrue("the extracted base is temporary and must be cleaned up", context.isTemporary)
+  }
+
+  @Test
+  fun downloadAssetAndVerifyHashAndWriteToPath_patchesAgainstTheEmbeddedBundleAndCleansUp() = runTest {
+    val currentUpdateId = UUID.randomUUID()
+    val baseBytes = loadFixture("old.hbc")
+    val patchedBytes = loadFixture("new.hbc")
+    val expected = temporaryFolder.newFile("expected-embedded.hbc").apply {
+      writeBytes(patchedBytes)
+    }
+    val expectedHash = UpdatesUtils.toBase64Url(UpdatesUtils.sha256(expected))
+
+    server.enqueue(
+      MockResponse()
+        .setResponseCode(226)
+        .setHeader("Content-Type", "application/javascript")
+        .setHeader("im", "bsdiff")
+        .setHeader("expo-base-update-id", currentUpdateId.toString())
+        .setBody("diff payload")
+    )
+
+    // With embedded asset copying off, the launch asset row points into the APK.
+    val launchEntity = AssetEntity("launch", "hbc").apply {
+      relativePath = "file:///android_asset/app.bundle"
+    }
+    val updateDao = mockk<UpdateDao> {
+      every { loadLaunchAssetForUpdate(currentUpdateId) } returns launchEntity
+    }
+    val database = mockk<UpdatesDatabase> {
+      every { updateDao() } returns updateDao
+    }
+
+    val asset = AssetEntity("bundle", "hbc").apply {
+      url = Uri.parse(server.url("/bundle.hbc").toString())
+      isLaunchAsset = true
+    }
+
+    val downloader = FileDownloader(filesDirectory, "test-eas-client", configuration, logger, database, OkHttpClient())
+    downloader.applyPatch = { baseFilePath, newFilePath, _ ->
+      assertArrayEquals(baseBytes, File(baseFilePath).readBytes())
+      File(newFilePath).writeBytes(patchedBytes)
+      0
+    }
+
+    var extractedInto: File? = null
+    val extractor: EmbeddedAssetExtractor = { _, base ->
+      base.writeBytes(baseBytes)
+      extractedInto = base
+    }
+
+    val destination = File(updatesDirectory, "downloaded.hbc")
+    val result = downloader.downloadAssetAndVerifyHashAndWriteToPath(
+      asset = asset,
+      extraHeaders = JSONObject(),
+      request = downloader.createRequestForAsset(asset, JSONObject(), configuration, allowPatch = true),
+      expectedBase64URLEncodedSHA256Hash = expectedHash,
+      destination = destination,
+      updatesDirectory = updatesDirectory,
+      progressListener = null,
+      allowPatch = true,
+      launchedUpdate = createUpdate(currentUpdateId),
+      requestedUpdate = createUpdate(UUID.randomUUID()),
+      embeddedAssetExtractor = extractor
+    )
+
+    assertArrayEquals(patchedBytes, destination.readBytes())
+    assertArrayEquals(UpdatesUtils.sha256(expected), result.hash)
+    // The patch applied, so only one request was made and no full bundle was downloaded.
+    assertEquals(1, server.requestCount)
+    // Verify clean up runs correctly
+    assertNotNull(extractedInto)
+    assertFalse("the extracted base must not be left behind", extractedInto!!.exists())
+    assertFalse(File(destination.absolutePath + ".base").exists())
+  }
+
+  @Test
+  fun prepareAssetForDiff_throwsForEmbeddedLaunchAssetWithoutAnExtractor() {
+    val currentUpdateId = UUID.randomUUID()
+
+    val launchEntity = AssetEntity("launch", "hbc").apply {
+      relativePath = "file:///android_asset/app.bundle"
+    }
+
+    val updateDao = mockk<UpdateDao> {
+      every { loadLaunchAssetForUpdate(currentUpdateId) } returns launchEntity
+    }
+    val database = mockk<UpdatesDatabase> {
+      every { updateDao() } returns updateDao
+    }
+    val downloader = FileDownloader(filesDirectory, "test-eas-client", configuration, logger, database)
+
+    val asset = AssetEntity("new", "hbc").apply { isLaunchAsset = true }
+    val response = "patch".toResponseBody("application/vnd.bsdiff".toMediaTypeOrNull())
+
+    val error = assertThrows(IOException::class.java) {
+      downloader.prepareAssetForDiff(asset, response, patchDestination(), updatesDirectory, createUpdate(currentUpdateId))
+    }
+    assertTrue(
+      "expected the message to name the missing extractor, got: ${error.message}",
+      error.message!!.contains("cannot be extracted")
+    )
+  }
+
+  private fun patchDestination() = File(updatesDirectory, "patched.hbc")
 
   private fun loadFixture(name: String): ByteArray {
     val stream = javaClass.classLoader?.getResourceAsStream(name)

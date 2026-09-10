@@ -96,14 +96,7 @@ abstract class AssetDao {
   fun loadAssetWithKey(key: String?): AssetEntity? {
     val asset = loadAssetWithKeyInternal(key).firstOrNull() ?: return null
 
-    // Load some properties not stored in database but can be computed from other fields
-    asset.relativePath?.let {
-      val (embeddedAssetFilename, resourceFolder, resourceFilename) =
-        AndroidResourceAssetUtils.parseAndroidResponseAssetFromPath(it)
-      asset.embeddedAssetFilename = embeddedAssetFilename
-      asset.resourcesFolder = resourceFolder
-      asset.resourcesFilename = resourceFilename
-    }
+    AndroidResourceAssetUtils.fillEmbeddedAssetIdentity(asset)
     return asset
   }
 
